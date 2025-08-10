@@ -28,6 +28,7 @@ https://youtu.be/UzXqOMhk83A
   - List of all bookings
   - Cancel booking with reason
   - Modify date/time/party/notes (guards against unavailable slots)
+  - For demonstration purposes, (this would be kept secret otherwise) the link for the owner login is http://localhost:5173/login?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1bmlxdWVfbmFtZSI6ImFwcGVsbGErYXBpQHJlc2RpYXJ5LmNvbSIsIm5iZiI6MTc1NDQzMDgwNSwiZXhwIjoxNzU0NTE3MjA1LCJpYXQiOjE3NTQ0MzA4MDUsImlzcyI6IlNlbGYiLCJhdWQiOiJodHRwczovL2FwaS5yZXNkaWFyeS5jb20ifQ.g3yLsufdk8Fn2094SB3J3XW-KdBc0DY9a2Jiu_56ud8
 - Availability slots are marked unavailable on booking and restored on cancel
 
 ## Run Locally
