@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+/* Expose a Playfair utility: className="font-playfair" */
+@theme {
+  --font-playfair: "Playfair Display", serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+/* ---------- Base reset & theme ---------- */
+:root {
+  /* Brand palette */
+  --hu-ink: #3b0764;            /* deep purple for headings */
+  --hu-text: #4b5563;           /* neutral body text */
+  --hu-accent-1: #f0abfc;       /* pink/violet accents */
+  --hu-accent-2: #c084fc;       /* violet */
+  --hu-accent-3: #fbcfe8;       /* light pink */
+
+  /* Radii & shadows */
+  --hu-radius: 1rem;
+  --hu-shadow: 0 10px 25px -10px rgba(99, 102, 241, 0.25);
+}
+
+/* Global body styles */
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  color: var(--hu-text);
+  background:
+    radial-gradient(1200px 600px at 10% -10%, rgba(240, 171, 252, 0.15), transparent 60%),
+    radial-gradient(900px 500px at 90% 10%, rgba(192, 132, 252, 0.12), transparent 60%),
+    radial-gradient(800px 500px at 50% 110%, rgba(251, 207, 232, 0.15), transparent 60%),
+    #fffdfa; /* lighter base */
+}
+
+
+/* Scope smoothing to texty elements only */
+body, button, input, select, textarea, p, li, small, code, pre {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Force vibrant emoji */
+.emoji {
+  opacity: 1 !important;
+  filter: none !important;
+  mix-blend-mode: normal !important;
+  -webkit-font-smoothing: auto !important;
+  -moz-osx-font-smoothing: auto !important;
+}
+
+/* Headings get the regal touch */
+@layer base {
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-playfair;
+    color: var(--hu-ink);
+    letter-spacing: 0.01em;
+  }
+  h1 { @apply text-4xl md:text-5xl font-extrabold; }
+  h2 { @apply text-3xl md:text-4xl font-bold; }
+  h3 { @apply text-2xl md:text-3xl font-semibold; }
+}
+
+/* Links */
+a { color: var(--hu-ink); text-decoration: none; }
+a:hover { color: #7c3aed; /* violet-600 */ }
+
+/* Buttons – default look for plain <button> (Tailwind classes can override) */
+button {
+  border: 1px solid transparent;
+  border-radius: var(--hu-radius);
+  padding: 0.6rem 1.1rem;
+  font-weight: 600;
+  background: linear-gradient(90deg, var(--hu-accent-2), var(--hu-accent-1));
+  color: white;
+  box-shadow: var(--hu-shadow);
+  transition: transform 120ms ease, box-shadow 200ms ease, filter 120ms ease;
+  cursor: pointer;
+}
+button:hover {
+  filter: brightness(1.03);
+  box-shadow: 0 12px 28px -12px rgba(124, 58, 237, 0.45);
+}
+button:active { transform: translateY(1px); }
+button:focus-visible {
+  outline: 3px solid rgba(192, 132, 252, 0.5);
+  outline-offset: 2px;
+}
+
+/* Inputs & selects */
+input, select, textarea {
+  border-radius: 0.75rem;
+  border: 1px solid rgba(124, 58, 237, 0.20);
+  padding: 0.6rem 0.8rem;
+  width: 100%;
+  background: white;
+  transition: box-shadow 150ms ease, border-color 150ms ease;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: rgba(124, 58, 237, 0.45);
+  box-shadow: 0 0 0 4px rgba(192, 132, 252, 0.25);
+  outline: none;
+}
+
+/* Cards */
+.card {
+  background: white;
+  border: 1px solid rgba(124, 58, 237, 0.12);
+  border-radius: var(--hu-radius);
+  box-shadow: var(--hu-shadow);
+}
+
+/* Selection */
+::selection { background: rgba(236, 72, 153, 0.25); }
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* Dark mode (optional) */
+@media (prefers-color-scheme: dark) {
+  body {
+    color: #e9e9f121;
+    background:
+      radial-gradient(1000px 600px at 10% -10%, rgba(147, 51, 234, 0.20), transparent 60%),
+      radial-gradient(800px 500px at 90% 10%, rgba(236, 72, 153, 0.15), transparent 60%),
+      #0f0b1b;
+  }
+  .card {
+    background: rgba(255,255,255,0.03);
+    border-color: rgba(236, 72, 153, 0.15);
+  }
+  input, select, textarea {
+    background: rgba(255,255,255,0.06);
+    color: #f3f3f8;
+    border-color: rgba(236, 72, 153, 0.18);
+  }
+  a { color: #e9d5ff; }
+}
+
+/* Stronger input text + placeholder for contrast */
+input, select, textarea {
+  color: #1f2937; /* gray-800 */
+}
+
+::placeholder {
+  color: #6b7280; /* gray-500 */
+  opacity: 1;     /* ensure full opacity on Firefox */
+}

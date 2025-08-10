@@ -187,3 +187,4 @@ class CancellationReason(Base):
     id = Column(Integer, primary_key=True, index=True)
     reason = Column(String, nullable=False)
     description = Column(Text)
+

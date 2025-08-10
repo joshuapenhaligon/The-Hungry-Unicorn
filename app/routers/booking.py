@@ -17,7 +17,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Restaurant, Customer, Booking, CancellationReason
+from app.models import Restaurant, Customer, Booking, CancellationReason, AvailabilitySlot
+
 
 router = APIRouter(prefix="/api/ConsumerApi/v1/Restaurant", tags=["booking"])
 
@@ -131,8 +132,7 @@ async def create_booking_with_stripe(
     RestaurantSmsMarketingOptInText: Optional[str] = Form(
         None, alias="Customer[RestaurantSmsMarketingOptInText]"
     ),
-    db: Session = Depends(get_db),
-    token: str = Depends(verify_token)
+    db: Session = Depends(get_db)
 ):
     """
     Create a new booking with Stripe payment token
@@ -141,6 +141,18 @@ async def create_booking_with_stripe(
     restaurant = db.query(Restaurant).filter(Restaurant.name == restaurant_name).first()
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
+    
+    # Check there is an available slot for this date/time
+    slot = db.query(AvailabilitySlot).filter(
+        AvailabilitySlot.restaurant_id == restaurant.id,
+        AvailabilitySlot.date == VisitDate,
+        AvailabilitySlot.time == VisitTime,
+    ).first()
+
+    if not slot:
+        raise HTTPException(status_code=400, detail="No availability slot found for that date/time")
+    if not slot.available:
+        raise HTTPException(status_code=400, detail="Selected time slot is not available")
 
     # Create or find customer
     customer = None
@@ -196,6 +208,10 @@ async def create_booking_with_stripe(
     db.commit()
     db.refresh(booking)
 
+    #  Mark the slot as taken
+    slot.available = False
+    db.commit()
+
     return {
         "booking_reference": booking_reference,
         "booking_id": booking.id,
@@ -227,8 +243,7 @@ async def cancel_booking(
     micrositeName: str = Form(...),
     bookingReference: str = Form(...),
     cancellationReasonId: int = Form(...),
-    db: Session = Depends(get_db),
-    token: str = Depends(verify_token)
+    db: Session = Depends(get_db)
 ):
     """
     Cancel an existing booking
@@ -266,6 +281,15 @@ async def cancel_booking(
     booking.cancellation_reason_id = cancellationReasonId
     booking.updated_at = datetime.utcnow()
 
+    # Free up the slot for that date/time
+    slot = db.query(AvailabilitySlot).filter(
+        AvailabilitySlot.restaurant_id == restaurant.id,
+        AvailabilitySlot.date == booking.visit_date,
+        AvailabilitySlot.time == booking.visit_time,
+    ).first()
+    if slot:
+        slot.available = True
+
     db.commit()
     db.refresh(booking)
 
@@ -286,8 +310,7 @@ async def cancel_booking(
 async def get_booking(
     restaurant_name: str,
     booking_reference: str,
-    db: Session = Depends(get_db),
-    token: str = Depends(verify_token)
+    db: Session = Depends(get_db)
 ):
     """
     Get booking details by reference
@@ -355,17 +378,19 @@ async def update_booking(
     SpecialRequests: Optional[str] = Form(None),
     IsLeaveTimeConfirmed: Optional[bool] = Form(None),
     db: Session = Depends(get_db),
-    token: str = Depends(verify_token)
+    # NOTE: leave token off if customers can edit their booking too; keep it if you want owner-only
+    # token: str = Depends(verify_token)
 ):
     """
-    Update an existing booking
+    Update an existing booking, enforcing slot availability rules:
+      - If date/time changes: target slot must exist AND be available
+      - Free old slot if no other confirmed bookings remain on it
+      - Mark new slot unavailable
     """
-    # Find restaurant
     restaurant = db.query(Restaurant).filter(Restaurant.name == restaurant_name).first()
     if not restaurant:
         raise HTTPException(status_code=404, detail="Restaurant not found")
 
-    # Find booking
     booking = db.query(Booking).filter(
         Booking.booking_reference == booking_reference,
         Booking.restaurant_id == restaurant.id
@@ -373,41 +398,85 @@ async def update_booking(
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
-    # Check if booking can be updated
     if booking.status == "cancelled":
         raise HTTPException(status_code=400, detail="Cannot update cancelled booking")
 
-    # Track updates
-    updates = {}
-    updated = False
+    # Track updates for response
+    updates: dict[str, Any] = {}
+    new_date = VisitDate if VisitDate is not None else booking.visit_date
+    new_time = VisitTime if VisitTime is not None else booking.visit_time
+    new_party = PartySize if PartySize is not None else booking.party_size
 
+    moving_slot = (new_date != booking.visit_date) or (new_time != booking.visit_time)
+
+    # If moving, validate target slot and toggle availability flags
+    if moving_slot:
+        # Must have a defined target slot
+        new_slot = db.query(AvailabilitySlot).filter(
+            AvailabilitySlot.restaurant_id == restaurant.id,
+            AvailabilitySlot.date == new_date,
+            AvailabilitySlot.time == new_time
+        ).first()
+        if not new_slot:
+            raise HTTPException(status_code=404, detail="New time slot not found")
+
+        # Respect capacity: max party size and 'available' flag
+        if new_party > new_slot.max_party_size:
+            raise HTTPException(status_code=400, detail="Party size exceeds slot capacity")
+
+        # If you allow multiple bookings per slot, you’d check count here.
+        # For now, honor the boolean + any existing confirmed bookings rule.
+        existing_in_target = db.query(Booking).filter(
+            Booking.restaurant_id == restaurant.id,
+            Booking.visit_date == new_date,
+            Booking.visit_time == new_time,
+            Booking.status == "confirmed",
+            Booking.id != booking.id
+        ).count()
+
+        # With a boolean 'available', block if slot is marked unavailable OR already has any booking
+        if not new_slot.available or existing_in_target > 0:
+            raise HTTPException(status_code=400, detail="That slot is no longer available")
+
+        # Free old slot if it has no other confirmed bookings
+        old_slot = db.query(AvailabilitySlot).filter(
+            AvailabilitySlot.restaurant_id == restaurant.id,
+            AvailabilitySlot.date == booking.visit_date,
+            AvailabilitySlot.time == booking.visit_time
+        ).first()
+        if old_slot:
+            other_on_old = db.query(Booking).filter(
+                Booking.restaurant_id == restaurant.id,
+                Booking.visit_date == booking.visit_date,
+                Booking.visit_time == booking.visit_time,
+                Booking.status == "confirmed",
+                Booking.id != booking.id
+            ).count()
+            if other_on_old == 0:
+                old_slot.available = True
+
+        # Take the new slot
+        new_slot.available = False
+
+    # Apply simple field updates
     if VisitDate is not None and VisitDate != booking.visit_date:
         booking.visit_date = VisitDate
         updates["visit_date"] = VisitDate
-        updated = True
-
     if VisitTime is not None and VisitTime != booking.visit_time:
         booking.visit_time = VisitTime
         updates["visit_time"] = VisitTime
-        updated = True
-
     if PartySize is not None and PartySize != booking.party_size:
         booking.party_size = PartySize
         updates["party_size"] = PartySize
-        updated = True
-
     if SpecialRequests is not None and SpecialRequests != booking.special_requests:
         booking.special_requests = SpecialRequests
         updates["special_requests"] = SpecialRequests
-        updated = True
-
-    if (IsLeaveTimeConfirmed is not None and
-            IsLeaveTimeConfirmed != booking.is_leave_time_confirmed):
+    if (IsLeaveTimeConfirmed is not None
+            and IsLeaveTimeConfirmed != booking.is_leave_time_confirmed):
         booking.is_leave_time_confirmed = IsLeaveTimeConfirmed
         updates["is_leave_time_confirmed"] = IsLeaveTimeConfirmed
-        updated = True
 
-    if updated:
+    if updates:
         booking.updated_at = datetime.utcnow()
         db.commit()
         db.refresh(booking)
@@ -417,10 +486,167 @@ async def update_booking(
         "booking_id": booking.id,
         "restaurant": restaurant_name,
         "updates": updates,
-        "status": "updated" if updated else "no_changes",
+        "status": "updated" if updates else "no_changes",
         "updated_at": booking.updated_at,
         "message": (
             f"Booking {booking_reference} has been "
-            f"{'successfully updated' if updated else 'checked - no changes made'}"
+            f"{'successfully updated' if updates else 'checked - no changes made'}"
         )
+    }
+
+
+@router.get("/{restaurant_name}/Bookings")
+async def list_bookings(
+    restaurant_name: str,
+    status: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    token: str = Depends(verify_token),
+):
+    """
+    List bookings for a restaurant (owner dashboard).
+
+    Query params:
+      - status: filter by booking status (e.g. "confirmed", "cancelled")
+      - date_from, date_to: filter by visit_date range
+      - limit/offset: basic pagination
+    """
+    # Find restaurant
+    restaurant = (
+        db.query(Restaurant)
+        .filter(Restaurant.name == restaurant_name)
+        .first()
+    )
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    q = (
+        db.query(Booking)
+        .filter(Booking.restaurant_id == restaurant.id)
+    )
+
+    if status:
+        q = q.filter(Booking.status == status)
+
+    if date_from:
+        q = q.filter(Booking.visit_date >= date_from)
+
+    if date_to:
+        q = q.filter(Booking.visit_date <= date_to)
+
+    q = q.order_by(Booking.visit_date.desc(), Booking.visit_time.desc())
+
+    bookings = q.offset(offset).limit(limit).all()
+
+    # Serialize a compact row for the dashboard table
+    return [
+        {
+            "booking_reference": b.booking_reference,
+            "booking_id": b.id,
+            "restaurant": restaurant_name,
+            "visit_date": b.visit_date,
+            "visit_time": b.visit_time,
+            "party_size": b.party_size,
+            "status": b.status,
+            "customer": {
+                "id": b.customer.id if b.customer else None,
+                "first_name": b.customer.first_name if b.customer else None,
+                "surname": b.customer.surname if b.customer else None,
+                "email": b.customer.email if b.customer else None,
+                "mobile": b.customer.mobile if b.customer else None,
+            },
+            "created_at": b.created_at,
+            "updated_at": b.updated_at,
+        }
+        for b in bookings
+    ]
+
+@router.get("/{restaurant_name}/CancellationReasons")
+async def list_cancellation_reasons(
+    restaurant_name: str,
+    db: Session = Depends(get_db)
+):
+    # verify restaurant exists (keeps the pattern consistent)
+    restaurant = db.query(Restaurant).filter(Restaurant.name == restaurant_name).first()
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    reasons = db.query(CancellationReason).order_by(CancellationReason.id).all()
+    return [{"id": r.id, "reason": r.reason, "description": r.description} for r in reasons]
+
+@router.post("/{restaurant_name}/Booking/{booking_reference}/Update")
+async def update_booking(
+    restaurant_name: str,
+    booking_reference: str,
+    VisitDate: date = Form(...),
+    VisitTime: time = Form(...),
+    PartySize: int = Form(...),
+    SpecialRequests: str = Form(None),
+    db: Session = Depends(get_db),
+    token: str = Depends(verify_token)
+):
+    # 1. Find restaurant & booking
+    restaurant = db.query(Restaurant).filter(Restaurant.name == restaurant_name).first()
+    if not restaurant:
+        raise HTTPException(status_code=404, detail="Restaurant not found")
+
+    booking = db.query(Booking).filter(
+        Booking.booking_reference == booking_reference,
+        Booking.restaurant_id == restaurant.id
+    ).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+    if booking.status == "cancelled":
+        raise HTTPException(status_code=400, detail="Cannot update a cancelled booking")
+
+    # 2. If moving to new slot, check availability
+    if booking.visit_date != VisitDate or booking.visit_time != VisitTime:
+        new_slot = db.query(AvailabilitySlot).filter(
+            AvailabilitySlot.restaurant_id == restaurant.id,
+            AvailabilitySlot.date == VisitDate,
+            AvailabilitySlot.time == VisitTime
+        ).first()
+        if not new_slot:
+            raise HTTPException(status_code=404, detail="New time slot not found")
+        if not new_slot.available:
+            raise HTTPException(status_code=400, detail="That slot is no longer available")
+
+        # Mark old slot as available (if no other confirmed bookings exist there)
+        old_slot = db.query(AvailabilitySlot).filter(
+            AvailabilitySlot.restaurant_id == restaurant.id,
+            AvailabilitySlot.date == booking.visit_date,
+            AvailabilitySlot.time == booking.visit_time
+        ).first()
+        if old_slot:
+            existing_old = db.query(Booking).filter(
+                Booking.restaurant_id == restaurant.id,
+                Booking.visit_date == booking.visit_date,
+                Booking.visit_time == booking.visit_time,
+                Booking.status == "confirmed",
+                Booking.id != booking.id
+            ).count()
+            if existing_old == 0:
+                old_slot.available = True
+
+        # Mark new slot as taken
+        new_slot.available = False
+
+    # 3. Update booking details
+    booking.visit_date = VisitDate
+    booking.visit_time = VisitTime
+    booking.party_size = PartySize
+    booking.special_requests = SpecialRequests
+    db.commit()
+    db.refresh(booking)
+
+    return {
+        "message": "Booking updated successfully",
+        "booking_reference": booking.booking_reference,
+        "visit_date": booking.visit_date,
+        "visit_time": booking.visit_time,
+        "party_size": booking.party_size,
+        "special_requests": booking.special_requests
     }

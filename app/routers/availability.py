@@ -66,8 +66,7 @@ async def availability_search(
     VisitDate: date = Form(..., description="Visit date in YYYY-MM-DD format"),
     PartySize: int = Form(..., description="Number of people in the party"),
     ChannelCode: str = Form(..., description="Booking channel (e.g., 'ONLINE')"),
-    db: Session = Depends(get_db),
-    token: str = Depends(verify_token)
+    db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     """
     Search for available booking slots at a restaurant.
