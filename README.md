@@ -6,6 +6,8 @@
 This is a full-stack restaurant booking app, with a modern React user interface, and the backend is ran on FastAPI.
 This restaurant booking app features live availability, bookings, looking up existing bookings, cancelling a booking, and a proper dashboard that only the owner can access with an API token which features the ability to manage and cancel any booking.
 
+The development of this project has been assisted by AI. I noticed "Familiarity with no-code or AI-assisted development tools" is something Locai Labs is looking for, and the completion of a full-stack website in only a few days would be rather difficult without making use of this tool.
+
 VIDEO DEMONSTRATION:
 https://youtu.be/UzXqOMhk83A
 
